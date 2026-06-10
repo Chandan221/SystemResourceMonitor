@@ -43,7 +43,7 @@ class SystemMonitorApp(ctk.CTk):
 
         self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(4, weight=1)
+        self.sidebar.grid_rowconfigure(100, weight=1)
 
         self.logo_label = ctk.CTkLabel(
             self.sidebar, text="Resource\nMonitor",
@@ -74,10 +74,10 @@ class SystemMonitorApp(ctk.CTk):
             self.nav_buttons.append(btn)
 
         self.version_label = ctk.CTkLabel(
-            self.sidebar,             text="v1.0.1", font=ctk.CTkFont(size=11),
+            self.sidebar, text="v1.0.1", font=ctk.CTkFont(size=11),
             text_color="#555555"
         )
-        self.version_label.grid(row=5, column=0, pady=10)
+        self.version_label.grid(row=101, column=0, pady=10)
 
         self.main_area = ctk.CTkFrame(self, corner_radius=0)
         self.main_area.grid(row=0, column=1, sticky="nsew")
@@ -477,120 +477,115 @@ class SystemMonitorApp(ctk.CTk):
     def _display_file_groups(self, groups, total):
         self.file_status.configure(text=f"Total: {total} files across {len(groups)} categories")
 
-        row = 0
-        for category, cat_data in groups.items():
+        for cat_idx, (category, cat_data) in enumerate(groups.items()):
             group_frame = ctk.CTkFrame(self.file_results, fg_color=("#e8e8e8", "#1e1e3a"))
-            group_frame.grid(row=row, column=0, pady=4, sticky="ew")
+            group_frame.grid(row=cat_idx, column=0, pady=3, sticky="ew")
             group_frame.grid_columnconfigure(1, weight=1)
 
             header_frame = ctk.CTkFrame(group_frame, fg_color="transparent")
-            header_frame.grid(row=0, column=0, columnspan=3, padx=8, pady=4, sticky="ew")
+            header_frame.grid(row=0, column=0, columnspan=4, padx=6, pady=4, sticky="ew")
             header_frame.grid_columnconfigure(1, weight=1)
 
             expand_btn = ctk.CTkButton(
-                header_frame, text="▶", width=28, height=22,
-                font=ctk.CTkFont(size=10),
+                header_frame, text="▶", width=26, height=22,
+                font=ctk.CTkFont(size=9),
                 fg_color="#2a2a4a", hover_color="#3a3a5a",
-                command=lambda g=group_frame, c=category: self._toggle_group(g, c),
             )
-            expand_btn.grid(row=0, column=0, padx=(4, 8))
+            expand_btn.grid(row=0, column=0, padx=(2, 6))
 
-            label = ctk.CTkLabel(
+            cat_label = ctk.CTkLabel(
                 header_frame, text=f"{category}  ({cat_data['total_count']} files)",
                 font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
             )
-            label.grid(row=0, column=1, padx=4, sticky="w")
+            cat_label.grid(row=0, column=1, padx=2, sticky="w")
 
-            size_label = ctk.CTkLabel(
+            cat_size = ctk.CTkLabel(
                 header_frame, text=format_bytes(cat_data["total_size"]),
                 font=ctk.CTkFont(size=13), anchor="e", width=100
             )
-            size_label.grid(row=0, column=2, padx=8)
+            cat_size.grid(row=0, column=2, padx=6)
 
             body_frame = ctk.CTkFrame(group_frame, fg_color="transparent")
-            body_frame.grid_remove()
+            body_frame.grid_columnconfigure(1, weight=1)
 
-            self.file_group_widgets[category] = {
-                "body": body_frame,
-                "expanded": False,
-                "expand_btn": expand_btn,
-                "data": cat_data,
-                "container": group_frame,
-            }
-
+            row_in_body = 0
             if cat_data["extensions"]:
-                total_ext_size = sum(d["total_size"] for d in cat_data["extensions"].values())
-                for ext_idx, (ext, ext_data) in enumerate(cat_data["extensions"].items()):
-                    ext_pct = (ext_data["total_size"] / total_ext_size * 100) if total_ext_size > 0 else 0
+                ext_total = sum(d["total_size"] for d in cat_data["extensions"].values())
+                for ext, ext_data in cat_data["extensions"].items():
+                    ext_pct = (ext_data["total_size"] / ext_total * 100) if ext_total > 0 else 0
+
                     ext_label = ctk.CTkLabel(
                         body_frame, text=ext,
                         font=ctk.CTkFont(size=12), width=80, anchor="w"
                     )
-                    ext_label.grid(row=ext_idx, column=0, padx=(20, 8), pady=2, sticky="w")
+                    ext_label.grid(row=row_in_body, column=0, padx=(16, 4), pady=2, sticky="w")
 
                     ext_bar = ctk.CTkProgressBar(body_frame, height=10, corner_radius=2)
-                    ext_bar.grid(row=ext_idx, column=1, padx=4, pady=2, sticky="ew")
+                    ext_bar.grid(row=row_in_body, column=1, padx=4, pady=2, sticky="ew")
                     ext_bar.set(ext_pct / 100)
 
                     ext_info = ctk.CTkLabel(
                         body_frame, text=f"{ext_data['count']} files  {format_bytes(ext_data['total_size'])}",
                         font=ctk.CTkFont(size=11), anchor="e", width=180
                     )
-                    ext_info.grid(row=ext_idx, column=2, padx=8, pady=2)
+                    ext_info.grid(row=row_in_body, column=2, padx=8, pady=2)
+                    row_in_body += 1
 
                     files = sorted(ext_data["files"], key=lambda x: x["size"], reverse=True)
-                    for f_idx, fdata in enumerate(files[:50]):
+                    for fdata in files[:50]:
                         f_pct = (fdata["size"] / ext_data["total_size"] * 100) if ext_data["total_size"] > 0 else 0
                         fname = fdata["name"] if len(fdata["name"]) < 40 else fdata["name"][:37] + "..."
-                        f_row = ext_idx * 100 + f_idx + 1000
 
                         f_label = ctk.CTkLabel(
                             body_frame, text=fname,
                             font=ctk.CTkFont(size=10), anchor="w"
                         )
-                        f_label.grid(row=f_row, column=0, padx=(40, 8), pady=1, sticky="w")
+                        f_label.grid(row=row_in_body, column=0, padx=(32, 4), pady=1, sticky="w")
 
                         f_bar = ctk.CTkProgressBar(body_frame, height=6, corner_radius=2)
-                        f_bar.grid(row=f_row, column=1, padx=4, pady=1, sticky="ew")
+                        f_bar.grid(row=row_in_body, column=1, padx=4, pady=1, sticky="ew")
                         f_bar.set(f_pct / 100)
 
                         f_info = ctk.CTkLabel(
                             body_frame, text=format_bytes(fdata["size"]),
                             font=ctk.CTkFont(size=10), anchor="e", width=80
                         )
-                        f_info.grid(row=f_row, column=2, padx=(4, 4), pady=1)
+                        f_info.grid(row=row_in_body, column=2, padx=(2, 2), pady=1)
 
                         del_btn = ctk.CTkButton(
-                            body_frame, text="✕", width=24, height=18,
+                            body_frame, text="✕", width=22, height=18,
                             font=ctk.CTkFont(size=8),
                             fg_color="#5a2020", hover_color="#7a3030",
                             command=lambda p=fdata["path"], n=fdata["name"]: self._delete_single_file(p, n),
                         )
-                        del_btn.grid(row=f_row, column=3, padx=(2, 4), pady=1)
+                        del_btn.grid(row=row_in_body, column=3, padx=2, pady=1)
+                        row_in_body += 1
 
                     if len(files) > 50:
-                        more_label = ctk.CTkLabel(
+                        more = ctk.CTkLabel(
                             body_frame, text=f"... and {len(files) - 50} more files",
                             font=ctk.CTkFont(size=10, slant="italic"), anchor="w"
                         )
-                        more_label.grid(row=ext_idx * 100 + 1050, column=0, padx=(40, 8), pady=1, columnspan=3, sticky="w")
+                        more.grid(row=row_in_body, column=0, padx=(32, 4), pady=1, columnspan=3, sticky="w")
+                        row_in_body += 1
 
-            row += 1
+            expand_btn.configure(command=lambda g=group_frame, b=body_frame, e=expand_btn: self._toggle_group(g, b, e))
+            body_frame.grid_remove()
 
-    def _toggle_group(self, group_frame, category):
-        info = self.file_group_widgets.get(category)
-        if not info:
-            return
+            self.file_group_widgets[category] = {
+                "body": body_frame,
+                "expand_btn": expand_btn,
+            }
 
-        if info["expanded"]:
-            info["body"].grid_remove()
-            info["expand_btn"].configure(text="▶")
-            info["expanded"] = False
+        self.file_results.update_idletasks()
+
+    def _toggle_group(self, group_frame, body_frame, expand_btn):
+        if body_frame.winfo_ismapped():
+            body_frame.grid_remove()
+            expand_btn.configure(text="▶")
         else:
-            info["body"].grid(row=1, column=0, columnspan=3, padx=8, pady=(0, 8), sticky="ew")
-            info["body"].grid_columnconfigure(1, weight=1)
-            info["expand_btn"].configure(text="▼")
-            info["expanded"] = True
+            body_frame.grid(row=1, column=0, columnspan=4, padx=6, pady=(0, 6), sticky="ew")
+            expand_btn.configure(text="▼")
 
     def _delete_single_file(self, file_path, file_name):
         result = messagebox.askyesno(
