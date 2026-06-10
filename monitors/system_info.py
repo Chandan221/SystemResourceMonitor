@@ -104,3 +104,83 @@ def get_network_io():
 
 def get_process_count():
     return len(psutil.pids())
+
+
+FILE_TYPE_CATEGORIES = {
+    "Images": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp", ".tiff", ".raw"},
+    "Documents": {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".odt", ".csv", ".md"},
+    "Audio": {".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a"},
+    "Video": {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm", ".m4v"},
+    "Archives": {".zip", ".rar", ".tar", ".gz", ".7z", ".bz2", ".xz", ".iso"},
+    "Code": {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".hpp",
+             ".cs", ".rb", ".php", ".go", ".rs", ".swift", ".kt", ".scala", ".pl",
+             ".sh", ".bat", ".ps1", ".sql", ".html", ".css", ".scss", ".less", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg"},
+    "Executables": {".exe", ".msi", ".dll", ".so", ".dylib", ".bin", ".app", ".jar"},
+    "Fonts": {".ttf", ".otf", ".woff", ".woff2", ".eot"},
+    "Others": set(),
+}
+
+
+def categorize_extension(ext):
+    ext = ext.lower()
+    for category, extensions in FILE_TYPE_CATEGORIES.items():
+        if ext in extensions:
+            return category
+    return "Others"
+
+
+def scan_files_by_type(root_path, progress_callback=None):
+    files_by_ext = {}
+    total_found = 0
+    try:
+        for dirpath, _, filenames in os.walk(root_path):
+            for fname in filenames:
+                try:
+                    fpath = os.path.join(dirpath, fname)
+                    size = os.path.getsize(fpath)
+                    ext = os.path.splitext(fname)[1].lower() or "(no extension)"
+                    if ext not in files_by_ext:
+                        files_by_ext[ext] = {"files": [], "total_size": 0, "count": 0}
+                    files_by_ext[ext]["files"].append({
+                        "name": fname,
+                        "path": fpath,
+                        "size": size,
+                    })
+                    files_by_ext[ext]["total_size"] += size
+                    files_by_ext[ext]["count"] += 1
+                    total_found += 1
+                    if progress_callback and total_found % 100 == 0:
+                        progress_callback(total_found)
+                except (PermissionError, OSError):
+                    continue
+    except (PermissionError, OSError):
+        pass
+
+    groups = {}
+    for ext, data in files_by_ext.items():
+        category = categorize_extension(ext)
+        if category not in groups:
+            groups[category] = {"extensions": {}, "total_size": 0, "total_count": 0}
+        groups[category]["extensions"][ext] = data
+        groups[category]["total_size"] += data["total_size"]
+        groups[category]["total_count"] += data["count"]
+
+    for cat_data in groups.values():
+        cat_data["extensions"] = dict(
+            sorted(cat_data["extensions"].items(),
+                   key=lambda x: x[1]["total_size"], reverse=True)
+        )
+
+    groups = dict(
+        sorted(groups.items(),
+               key=lambda x: x[1]["total_size"], reverse=True)
+    )
+    return groups, total_found
+
+
+def delete_file(file_path):
+    try:
+        os.remove(file_path)
+        return True, None
+    except Exception as e:
+        return False, str(e)

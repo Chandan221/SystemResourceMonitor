@@ -10,6 +10,7 @@ from monitors.system_info import (
     get_cpu_usage, get_cpu_freq, get_cpu_count,
     get_ram_usage, get_disk_partitions, get_disk_usage,
     get_subfolder_sizes, format_bytes, get_process_count,
+    scan_files_by_type, delete_file, categorize_extension,
 )
 from widgets.gauge import CircularGauge, ProgressBarWidget, StatCard
 from widgets.chart import LineChart
@@ -55,6 +56,7 @@ class SystemMonitorApp(ctk.CTk):
             ("Dashboard", "dashboard"),
             ("Disk Usage", "disk"),
             ("Folder Analyzer", "folders"),
+            ("File Analyzer", "files"),
         ]
         self.nav_buttons = []
         for i, (text, key) in enumerate(nav_buttons):
@@ -72,7 +74,7 @@ class SystemMonitorApp(ctk.CTk):
             self.nav_buttons.append(btn)
 
         self.version_label = ctk.CTkLabel(
-            self.sidebar, text="v1.0.0", font=ctk.CTkFont(size=11),
+            self.sidebar,             text="v1.0.1", font=ctk.CTkFont(size=11),
             text_color="#555555"
         )
         self.version_label.grid(row=5, column=0, pady=10)
@@ -86,6 +88,7 @@ class SystemMonitorApp(ctk.CTk):
         self._build_dashboard()
         self._build_disk_tab()
         self._build_folders_tab()
+        self._build_file_analyzer_tab()
 
         self._switch_tab("dashboard")
 
@@ -360,6 +363,258 @@ class SystemMonitorApp(ctk.CTk):
             size_label.grid(row=0, column=2, padx=10, pady=4)
 
             self.folder_items.append((frame, bar, name, size, path))
+
+    def _build_file_analyzer_tab(self):
+        tab = ctk.CTkScrollableFrame(self.main_area, corner_radius=0)
+        tab.grid_columnconfigure(0, weight=1)
+        self.tabs["files"] = tab
+
+        header = ctk.CTkLabel(
+            tab, text="File Type Analyzer",
+            font=ctk.CTkFont(size=24, weight="bold")
+        )
+        header.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="w")
+
+        desc = ctk.CTkLabel(
+            tab, text="Deep-scan a directory to group files by type and manage them.",
+            font=ctk.CTkFont(size=12), text_color="#888888"
+        )
+        desc.grid(row=1, column=0, padx=20, pady=(0, 10), sticky="w")
+
+        controls = ctk.CTkFrame(tab, fg_color="transparent")
+        controls.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        controls.grid_columnconfigure(0, weight=1)
+
+        self.file_folder_var = ctk.StringVar(value="No folder selected")
+
+        folder_label = ctk.CTkLabel(
+            controls, textvariable=self.file_folder_var,
+            font=ctk.CTkFont(size=13), anchor="w"
+        )
+        folder_label.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="ew")
+
+        btn_frame = ctk.CTkFrame(controls, fg_color="transparent")
+        btn_frame.grid(row=0, column=1, pady=5)
+
+        self.file_select_btn = ctk.CTkButton(
+            btn_frame, text="Select Folder",
+            font=ctk.CTkFont(size=13),
+            command=self._select_file_folder, width=120,
+        )
+        self.file_select_btn.grid(row=0, column=0, padx=5)
+
+        self.file_scan_btn = ctk.CTkButton(
+            btn_frame, text="Deep Scan",
+            font=ctk.CTkFont(size=13),
+            command=self._deep_scan_files,
+            width=100, state="disabled",
+        )
+        self.file_scan_btn.grid(row=0, column=1, padx=5)
+
+        self.file_progress = ctk.CTkProgressBar(tab)
+        self.file_progress.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
+        self.file_progress.set(0)
+
+        self.file_status = ctk.CTkLabel(
+            tab, text="", font=ctk.CTkFont(size=12)
+        )
+        self.file_status.grid(row=4, column=0, padx=20, pady=(0, 5), sticky="w")
+
+        self.file_results = ctk.CTkFrame(tab, fg_color="transparent")
+        self.file_results.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
+        self.file_results.grid_columnconfigure(0, weight=1)
+
+        self.file_group_widgets = {}
+        self.selected_file_folder = None
+
+    def _select_file_folder(self):
+        folder = filedialog.askdirectory(title="Select a folder to deep-scan")
+        if folder:
+            self.selected_file_folder = folder
+            display = folder if len(folder) < 60 else "..." + folder[-57:]
+            self.file_folder_var.set(display)
+            self.file_scan_btn.configure(state="normal")
+            for w in self.file_results.winfo_children():
+                w.destroy()
+            self.file_group_widgets.clear()
+            self.file_status.configure(text="")
+            self.file_progress.set(0)
+
+    def _deep_scan_files(self):
+        if not self.selected_file_folder:
+            return
+
+        self.file_scan_btn.configure(state="disabled")
+        self.file_select_btn.configure(state="disabled")
+        self.file_progress.set(0)
+        self.file_status.configure(text="Scanning... (this may take a while for large folders)")
+        for w in self.file_results.winfo_children():
+            w.destroy()
+        self.file_group_widgets.clear()
+
+        self.file_progress.start()
+
+        thread = threading.Thread(target=self._do_file_scan, daemon=True)
+        thread.start()
+
+    def _do_file_scan(self):
+        try:
+            groups, total = scan_files_by_type(
+                self.selected_file_folder,
+                progress_callback=lambda n: self.after(0, lambda: self.file_status.configure(
+                    text=f"Scanning... {n} files found"
+                ))
+            )
+            self.after(0, lambda: self._display_file_groups(groups, total))
+        except Exception as e:
+            self.after(0, lambda: self.file_status.configure(text=f"Error: {e}"))
+        finally:
+            self.after(0, lambda: self.file_progress.stop())
+            self.after(0, lambda: self.file_progress.set(1))
+            self.after(0, lambda: self.file_scan_btn.configure(state="normal"))
+            self.after(0, lambda: self.file_select_btn.configure(state="normal"))
+
+    def _display_file_groups(self, groups, total):
+        self.file_status.configure(text=f"Total: {total} files across {len(groups)} categories")
+
+        row = 0
+        for category, cat_data in groups.items():
+            group_frame = ctk.CTkFrame(self.file_results, fg_color=("#e8e8e8", "#1e1e3a"))
+            group_frame.grid(row=row, column=0, pady=4, sticky="ew")
+            group_frame.grid_columnconfigure(1, weight=1)
+
+            header_frame = ctk.CTkFrame(group_frame, fg_color="transparent")
+            header_frame.grid(row=0, column=0, columnspan=3, padx=8, pady=4, sticky="ew")
+            header_frame.grid_columnconfigure(1, weight=1)
+
+            expand_btn = ctk.CTkButton(
+                header_frame, text="▶", width=28, height=22,
+                font=ctk.CTkFont(size=10),
+                fg_color="#2a2a4a", hover_color="#3a3a5a",
+                command=lambda g=group_frame, c=category: self._toggle_group(g, c),
+            )
+            expand_btn.grid(row=0, column=0, padx=(4, 8))
+
+            label = ctk.CTkLabel(
+                header_frame, text=f"{category}  ({cat_data['total_count']} files)",
+                font=ctk.CTkFont(size=14, weight="bold"), anchor="w"
+            )
+            label.grid(row=0, column=1, padx=4, sticky="w")
+
+            size_label = ctk.CTkLabel(
+                header_frame, text=format_bytes(cat_data["total_size"]),
+                font=ctk.CTkFont(size=13), anchor="e", width=100
+            )
+            size_label.grid(row=0, column=2, padx=8)
+
+            body_frame = ctk.CTkFrame(group_frame, fg_color="transparent")
+            body_frame.grid_remove()
+
+            self.file_group_widgets[category] = {
+                "body": body_frame,
+                "expanded": False,
+                "expand_btn": expand_btn,
+                "data": cat_data,
+                "container": group_frame,
+            }
+
+            if cat_data["extensions"]:
+                total_ext_size = sum(d["total_size"] for d in cat_data["extensions"].values())
+                for ext_idx, (ext, ext_data) in enumerate(cat_data["extensions"].items()):
+                    ext_pct = (ext_data["total_size"] / total_ext_size * 100) if total_ext_size > 0 else 0
+                    ext_label = ctk.CTkLabel(
+                        body_frame, text=ext,
+                        font=ctk.CTkFont(size=12), width=80, anchor="w"
+                    )
+                    ext_label.grid(row=ext_idx, column=0, padx=(20, 8), pady=2, sticky="w")
+
+                    ext_bar = ctk.CTkProgressBar(body_frame, height=10, corner_radius=2)
+                    ext_bar.grid(row=ext_idx, column=1, padx=4, pady=2, sticky="ew")
+                    ext_bar.set(ext_pct / 100)
+
+                    ext_info = ctk.CTkLabel(
+                        body_frame, text=f"{ext_data['count']} files  {format_bytes(ext_data['total_size'])}",
+                        font=ctk.CTkFont(size=11), anchor="e", width=180
+                    )
+                    ext_info.grid(row=ext_idx, column=2, padx=8, pady=2)
+
+                    files = sorted(ext_data["files"], key=lambda x: x["size"], reverse=True)
+                    for f_idx, fdata in enumerate(files[:50]):
+                        f_pct = (fdata["size"] / ext_data["total_size"] * 100) if ext_data["total_size"] > 0 else 0
+                        fname = fdata["name"] if len(fdata["name"]) < 40 else fdata["name"][:37] + "..."
+                        f_row = ext_idx * 100 + f_idx + 1000
+
+                        f_label = ctk.CTkLabel(
+                            body_frame, text=fname,
+                            font=ctk.CTkFont(size=10), anchor="w"
+                        )
+                        f_label.grid(row=f_row, column=0, padx=(40, 8), pady=1, sticky="w")
+
+                        f_bar = ctk.CTkProgressBar(body_frame, height=6, corner_radius=2)
+                        f_bar.grid(row=f_row, column=1, padx=4, pady=1, sticky="ew")
+                        f_bar.set(f_pct / 100)
+
+                        f_info = ctk.CTkLabel(
+                            body_frame, text=format_bytes(fdata["size"]),
+                            font=ctk.CTkFont(size=10), anchor="e", width=80
+                        )
+                        f_info.grid(row=f_row, column=2, padx=(4, 4), pady=1)
+
+                        del_btn = ctk.CTkButton(
+                            body_frame, text="✕", width=24, height=18,
+                            font=ctk.CTkFont(size=8),
+                            fg_color="#5a2020", hover_color="#7a3030",
+                            command=lambda p=fdata["path"], n=fdata["name"]: self._delete_single_file(p, n),
+                        )
+                        del_btn.grid(row=f_row, column=3, padx=(2, 4), pady=1)
+
+                    if len(files) > 50:
+                        more_label = ctk.CTkLabel(
+                            body_frame, text=f"... and {len(files) - 50} more files",
+                            font=ctk.CTkFont(size=10, slant="italic"), anchor="w"
+                        )
+                        more_label.grid(row=ext_idx * 100 + 1050, column=0, padx=(40, 8), pady=1, columnspan=3, sticky="w")
+
+            row += 1
+
+    def _toggle_group(self, group_frame, category):
+        info = self.file_group_widgets.get(category)
+        if not info:
+            return
+
+        if info["expanded"]:
+            info["body"].grid_remove()
+            info["expand_btn"].configure(text="▶")
+            info["expanded"] = False
+        else:
+            info["body"].grid(row=1, column=0, columnspan=3, padx=8, pady=(0, 8), sticky="ew")
+            info["body"].grid_columnconfigure(1, weight=1)
+            info["expand_btn"].configure(text="▼")
+            info["expanded"] = True
+
+    def _delete_single_file(self, file_path, file_name):
+        result = messagebox.askyesno(
+            "Delete File",
+            f"Are you sure you want to delete:\n{file_name}?\n\nThis action cannot be undone.",
+            icon="warning"
+        )
+        if not result:
+            return
+
+        success, error = delete_file(file_path)
+        if success:
+            self.file_status.configure(
+                text=f"Deleted: {file_name}",
+                text_color="#00e676"
+            )
+            self.after(2000, lambda: self.file_status.configure(text_color=self._get_default_fg()))
+        else:
+            messagebox.showerror("Error", f"Failed to delete {file_name}:\n{error}")
+
+        self._deep_scan_files()
+
+    def _get_default_fg(self):
+        return "#888888"
 
     def _switch_tab(self, tab_name):
         for name, tab in self.tabs.items():
