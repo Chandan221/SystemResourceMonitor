@@ -1,5 +1,6 @@
 import psutil
 import os
+import time
 from pathlib import Path
 
 
@@ -104,6 +105,125 @@ def get_network_io():
 
 def get_process_count():
     return len(psutil.pids())
+
+
+def get_per_cpu_usage():
+    return psutil.cpu_percent(interval=0.1, percpu=True)
+
+
+def get_top_processes(limit=10, sort_by="cpu"):
+    processes = []
+    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+        try:
+            pinfo = proc.info
+            processes.append(pinfo)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    if sort_by == "cpu":
+        processes.sort(key=lambda p: p['cpu_percent'] or 0, reverse=True)
+    else:
+        processes.sort(key=lambda p: p['memory_percent'] or 0, reverse=True)
+    return processes[:limit]
+
+
+def get_battery_info():
+    try:
+        bat = psutil.sensors_battery()
+        if bat:
+            return {
+                "percent": bat.percent,
+                "charging": bat.power_plugged,
+                "time_left": bat.secsleft if bat.secsleft != -1 else None,
+            }
+    except AttributeError:
+        pass
+    return None
+
+
+def _guess_interface_type(name):
+    n = name.lower().replace(" ", "").replace("-", "").replace("_", "")
+    if any(k in n for k in ["loopback", "lo"]):
+        return "Loopback"
+    if any(k in n for k in ["vmware", "vmnet", "vbox", "virtual"]):
+        return "Virtual"
+    if any(k in n for k in ["docker", "veth", "bridge"]):
+        return "Virtual"
+    if any(k in n for k in ["wifi", "wireless", "wlan"]):
+        return "WiFi"
+    if any(k in n for k in ["ethernet", "eth", "gbe", "pcie"]):
+        return "Ethernet"
+    if any(k in n for k in ["bluetooth", "bt"]):
+        return "Bluetooth"
+    if any(k in n for k in ["ppp", "pppoe", "wan"]):
+        return "WAN"
+    return "Unknown"
+
+
+def get_network_interfaces():
+    stats = psutil.net_if_stats()
+    addrs = psutil.net_if_addrs()
+    interfaces = []
+    for name, stat in stats.items():
+        ip = ""
+        for a in addrs.get(name, []):
+            if a.family == 2:
+                ip = a.address
+                break
+        interfaces.append({
+            "name": name,
+            "isup": stat.isup,
+            "speed": stat.speed,
+            "ip": ip,
+            "type": _guess_interface_type(name),
+        })
+    return interfaces
+
+
+_net_prev = None
+_net_prev_time = None
+
+
+def get_network_speed():
+    global _net_prev, _net_prev_time
+    current = psutil.net_io_counters()
+    now = time.time()
+    sent_speed = 0
+    recv_speed = 0
+    if _net_prev is not None and _net_prev_time is not None:
+        dt = now - _net_prev_time
+        if dt > 0:
+            sent_speed = (current.bytes_sent - _net_prev.bytes_sent) / dt
+            recv_speed = (current.bytes_recv - _net_prev.bytes_recv) / dt
+    _net_prev = current
+    _net_prev_time = now
+    return sent_speed, recv_speed, current.bytes_sent, current.bytes_recv
+
+
+def format_speed(bps):
+    if bps < 1024:
+        return f"{bps:.1f} B/s"
+    elif bps < 1024 * 1024:
+        return f"{bps / 1024:.1f} KB/s"
+    elif bps < 1024 * 1024 * 1024:
+        return f"{bps / (1024 * 1024):.1f} MB/s"
+    return f"{bps / (1024 * 1024 * 1024):.1f} GB/s"
+
+
+SPEED_UNITS = ["B/s", "KB/s", "MB/s", "Kbps", "Mbps"]
+
+
+def format_speed_custom(bps, unit):
+    if unit == "B/s":
+        return f"{bps:.1f} B/s"
+    elif unit == "KB/s":
+        return f"{bps / 1024:.1f} KB/s"
+    elif unit == "MB/s":
+        return f"{bps / (1024 * 1024):.1f} MB/s"
+    elif unit == "Kbps":
+        return f"{(bps * 8) / 1000:.1f} Kbps"
+    elif unit == "Mbps":
+        return f"{(bps * 8) / (1000 * 1000):.1f} Mbps"
+    return format_speed(bps)
 
 
 FILE_TYPE_CATEGORIES = {

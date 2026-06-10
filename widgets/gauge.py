@@ -49,10 +49,13 @@ class CircularGauge(ctk.CTkFrame):
         self.canvas.config(bg=self._get_bg_color())
         self.draw()
 
-    def set_value(self, value, detail=""):
+    def set_value(self, value, detail="", text=None):
         self.current_value = min(value, self.max_value)
         pct = (self.current_value / self.max_value) * 100 if self.max_value > 0 else 0
-        self.label_value.configure(text=f"{pct:.1f}{self.units}")
+        if text is not None:
+            self.label_value.configure(text=text)
+        else:
+            self.label_value.configure(text=f"{pct:.1f}{self.units}")
         self.label_detail.configure(text=detail)
         self.draw()
 
