@@ -4,8 +4,14 @@ import time
 from pathlib import Path
 
 
+def get_cpu_stats():
+    per_cpu = psutil.cpu_percent(interval=0.1, percpu=True)
+    overall = sum(per_cpu) / len(per_cpu) if per_cpu else 0
+    return overall, per_cpu
+
+
 def get_cpu_usage():
-    return psutil.cpu_percent(interval=0.1)
+    return get_cpu_stats()[0]
 
 
 def get_cpu_freq():
@@ -108,7 +114,7 @@ def get_process_count():
 
 
 def get_per_cpu_usage():
-    return psutil.cpu_percent(interval=0.1, percpu=True)
+    return get_cpu_stats()[1]
 
 
 def get_top_processes(limit=10, sort_by="cpu"):

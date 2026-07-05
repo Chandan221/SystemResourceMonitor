@@ -38,6 +38,10 @@ class CircularGauge(ctk.CTkFrame):
         )
         self.label_detail.grid(row=3, column=0, pady=(0, 10))
 
+        self._bg_oval_id = None
+        self._arc_id = None
+        self._dot_id = None
+
         self.bind("<Configure>", lambda e: self.draw())
         self.after(100, self._initial_draw)
 
@@ -47,6 +51,9 @@ class CircularGauge(ctk.CTkFrame):
 
     def _initial_draw(self):
         self.canvas.config(bg=self._get_bg_color())
+        self._bg_oval_id = None
+        self._arc_id = None
+        self._dot_id = None
         self.draw()
 
     def set_value(self, value, detail="", text=None):
@@ -67,7 +74,6 @@ class CircularGauge(ctk.CTkFrame):
         return "#ff1744"
 
     def draw(self):
-        self.canvas.delete("all")
         w = self.canvas_size
         cx, cy = w // 2, w // 2
         r = 70
@@ -75,26 +81,36 @@ class CircularGauge(ctk.CTkFrame):
 
         pct = (self.current_value / self.max_value) * 100 if self.max_value > 0 else 0
         angle = (pct / 100) * 360
-
-        self.canvas.create_oval(
-            cx - r, cy - r, cx + r, cy + r,
-            outline="#333355", width=line_width, tags="bg"
-        )
-
         color = self.get_color(pct)
+        bg_color = self._get_bg_color()
 
-        if angle > 0:
-            self.canvas.create_arc(
+        if self._bg_oval_id is None:
+            self._bg_oval_id = self.canvas.create_oval(
                 cx - r, cy - r, cx + r, cy + r,
-                start=90, extent=-angle,
-                outline=color, width=line_width,
-                style="arc", tags="arc"
+                outline="#333355", width=line_width
             )
 
-        self.canvas.create_oval(
-            cx - 20, cy - 20, cx + 20, cy + 20,
-            fill=self._get_bg_color(), outline=color, width=2
-        )
+        if angle > 0:
+            if self._arc_id is None:
+                self._arc_id = self.canvas.create_arc(
+                    cx - r, cy - r, cx + r, cy + r,
+                    start=90, extent=-angle,
+                    outline=color, width=line_width,
+                    style="arc"
+                )
+            else:
+                self.canvas.itemconfig(self._arc_id, extent=-angle, outline=color)
+                self.canvas.itemconfig(self._arc_id, state="normal")
+        elif self._arc_id is not None:
+            self.canvas.itemconfig(self._arc_id, state="hidden")
+
+        if self._dot_id is None:
+            self._dot_id = self.canvas.create_oval(
+                cx - 20, cy - 20, cx + 20, cy + 20,
+                fill=bg_color, outline=color, width=2
+            )
+        else:
+            self.canvas.itemconfig(self._dot_id, fill=bg_color, outline=color)
 
 
 class ProgressBarWidget(ctk.CTkFrame):

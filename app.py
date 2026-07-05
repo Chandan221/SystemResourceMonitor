@@ -2,16 +2,17 @@ import customtkinter as ctk
 import threading
 import time
 import os
+from collections import deque
 from tkinter import filedialog, messagebox
 
 import psutil
 
 from monitors.system_info import (
-    get_cpu_usage, get_cpu_freq, get_cpu_count,
+    get_cpu_stats, get_cpu_freq, get_cpu_count,
     get_ram_usage, get_disk_partitions, get_disk_usage,
     get_subfolder_sizes, format_bytes, get_process_count,
     scan_files_by_type, delete_file, categorize_extension,
-    get_per_cpu_usage, get_top_processes, get_battery_info,
+    get_top_processes, get_battery_info,
     get_network_speed, get_network_interfaces, format_speed, format_speed_custom, SPEED_UNITS,
 )
 from widgets.gauge import CircularGauge, ProgressBarWidget, StatCard
@@ -30,12 +31,15 @@ class SystemMonitorApp(ctk.CTk):
         self.geometry("1200x780")
         self.minsize(900, 600)
 
-        self.cpu_history = []
-        self.ram_history = []
-        self.net_sent_history = []
-        self.net_recv_history = []
+        self.cpu_history = deque(maxlen=60)
+        self.ram_history = deque(maxlen=60)
+        self.net_sent_history = deque(maxlen=60)
+        self.net_recv_history = deque(maxlen=60)
         self.running = True
         self.refresh_interval = 2.0
+        self.current_tab = "dashboard"
+        self._process_update_counter = 0
+        self._cached_processes = []
 
         self._setup_ui()
         self.update_idletasks()
@@ -453,14 +457,10 @@ class SystemMonitorApp(ctk.CTk):
             self.net_down_gauge.set_value(down_pct, f"DL: {down_text} / UL: {up_text}", text=down_text)
 
             self.net_sent_history.append(sent_speed)
-            if len(self.net_sent_history) > 60:
-                self.net_sent_history.pop(0)
             self.net_recv_history.append(recv_speed)
-            if len(self.net_recv_history) > 60:
-                self.net_recv_history.pop(0)
 
-            peak_hist = max(max(self.net_sent_history[-60:]), max(self.net_recv_history[-60:]), 1)
-            down_chart = [(v / peak_hist) * 100 for v in self.net_recv_history[-60:]]
+            peak_hist = max(max(self.net_sent_history), max(self.net_recv_history), 1)
+            down_chart = [(v / peak_hist) * 100 for v in self.net_recv_history]
             self.net_chart.set_data(down_chart)
         except Exception:
             pass
@@ -911,6 +911,7 @@ class SystemMonitorApp(ctk.CTk):
         return ("#444444", "#888888")
 
     def _switch_tab(self, tab_name):
+        self.current_tab = tab_name
         if tab_name not in self._tabs_built:
             self._tabs_built.add(tab_name)
             if tab_name == "disk":
@@ -946,7 +947,8 @@ class SystemMonitorApp(ctk.CTk):
             except Exception:
                 return default
         data = {}
-        data["cpu"] = safe(get_cpu_usage)
+        cpu_stats = safe(lambda: get_cpu_stats(), (0, []))
+        data["cpu"], data["per_cpu"] = cpu_stats
         data["freq"] = safe(get_cpu_freq)
         data["cores"] = safe(get_cpu_count)
         r = safe(lambda: get_ram_usage(), (0, 0, 0))
@@ -958,14 +960,21 @@ class SystemMonitorApp(ctk.CTk):
         data["disk"] = safe(lambda: get_disk_usage("/"), {"percent": 0, "used": 0, "total": 0})
         data["uptime"] = time.time() - safe(psutil.boot_time, 0)
         data["battery"] = safe(get_battery_info)
-        data["per_cpu"] = safe(get_per_cpu_usage, [])
-        data["top_procs"] = safe(lambda: get_top_processes(limit=8), [])
+        self._process_update_counter += 1
+        if self._process_update_counter % 5 == 0:
+            data["top_procs"] = safe(lambda: get_top_processes(limit=8), [])
+            self._cached_processes = data["top_procs"]
+        else:
+            data["top_procs"] = self._cached_processes
         ns = safe(lambda: get_network_speed(), (0, 0, 0, 0))
         if isinstance(ns, tuple) and len(ns) >= 2:
             data["sent_speed"], data["recv_speed"] = ns[0], ns[1]
         else:
             data["sent_speed"] = data["recv_speed"] = 0
-        data["interfaces"] = safe(get_network_interfaces, [])
+        if self.current_tab == "network":
+            data["interfaces"] = safe(get_network_interfaces, [])
+        else:
+            data["interfaces"] = []
         return data
 
     def _update_ui(self, data):
@@ -989,11 +998,7 @@ class SystemMonitorApp(ctk.CTk):
                 self.stat_cards["battery"].set_value("N/A")
 
             self.cpu_history.append(data["cpu"])
-            if len(self.cpu_history) > 60:
-                self.cpu_history.pop(0)
             self.ram_history.append(data["ram_pct"])
-            if len(self.ram_history) > 60:
-                self.ram_history.pop(0)
 
             if hasattr(self, 'cpu_chart'):
                 self.cpu_chart.set_data(self.cpu_history)
@@ -1001,10 +1006,11 @@ class SystemMonitorApp(ctk.CTk):
 
             self._update_per_core_ui(data["per_cpu"])
             self._update_processes_ui(data["top_procs"])
-            try:
-                self._update_network_ui(data["sent_speed"], data["recv_speed"], data.get("interfaces", []))
-            except Exception:
-                pass
+            if self.current_tab == "network":
+                try:
+                    self._update_network_ui(data["sent_speed"], data["recv_speed"], data.get("interfaces", []))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -1100,13 +1106,9 @@ class SystemMonitorApp(ctk.CTk):
         up_text = format_speed_custom(sent_speed, unit) if unit else format_speed(sent_speed)
         down_text = format_speed_custom(recv_speed, unit) if unit else format_speed(recv_speed)
         self.net_sent_history.append(sent_speed)
-        if len(self.net_sent_history) > 60:
-            self.net_sent_history.pop(0)
         self.net_recv_history.append(recv_speed)
-        if len(self.net_recv_history) > 60:
-            self.net_recv_history.pop(0)
-        up_peak = max(self.net_sent_history[-60:]) or 1
-        down_peak = max(self.net_recv_history[-60:]) or 1
+        up_peak = max(self.net_sent_history) or 1
+        down_peak = max(self.net_recv_history) or 1
         up_pct = min(sent_speed / up_peak * 100, 100)
         down_pct = min(recv_speed / down_peak * 100, 100)
         try:
@@ -1118,8 +1120,9 @@ class SystemMonitorApp(ctk.CTk):
         except Exception:
             pass
         if hasattr(self, 'net_chart'):
-            peak_hist = max(max(self.net_sent_history[-60:]), max(self.net_recv_history[-60:]), 1)
-            down_chart = [(v / peak_hist) * 100 for v in self.net_recv_history[-60:]]
+            peak_hist = max(max(self.net_sent_history), max(self.net_recv_history), 1)
+            down_chart = [(v / peak_hist) * 100 for v in self.net_recv_history]
+
             self.net_chart.set_data(down_chart)
         if interfaces is not None:
             try:
@@ -1151,7 +1154,7 @@ class SystemMonitorApp(ctk.CTk):
                 try:
                     chart.fig.patch.set_facecolor(chart._get_fig_bg())
                     chart.ax.set_facecolor(chart._get_ax_bg())
-                    chart._redraw()
+                    chart._redraw(full_redraw=True)
                 except Exception:
                     pass
 
